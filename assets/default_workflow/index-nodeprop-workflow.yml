@@ -1,0 +1,59 @@
+# index-nodeprop-workflow.yml
+name: "NodeProp Workflow: Register and Generate NodeProp Configuration"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      service_repo:
+        description: "The GitHub repository for the microservice"
+        required: true
+      service_name:
+        description: "The name of the microservice"
+        required: true
+      domain:
+        description: "The domain under which the service is registered"
+        required: true
+
+jobs:
+  generate-nodeprop:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v2
+        with:
+          repository: ${{ github.event.inputs.service_repo }}
+
+      - name: Set up Go environment
+        uses: actions/setup-go@v3
+        with:
+          go-version: '1.20'
+
+      - name: Run NodeProp Manager
+        run: |
+          go run ./cmd/main.go \
+            --add-workflow \
+            --repo "${{ github.event.inputs.service_repo }}" \
+            --workflow "${{ github.event.inputs.service_name }}" \
+            --domain "${{ github.event.inputs.domain }}" \
+            --config "./config.yaml"
+
+      - name: Generate .nodeprop.yml
+        run: |
+          echo "Generating nodeprop configuration file"
+          go run ./cmd/main.go \
+            --repo "${{ github.event.inputs.service_repo }}" \
+            --workflow "${{ github.event.inputs.service_name }}" \
+            --domain "${{ github.event.inputs.domain }}" \
+            --config "./config.yaml"
+
+      - name: Commit .nodeprop.yml to Repository
+        run: |
+          git config --local user.name "NodeProp Workflow"
+          git config --local user.email "actions@github.com"
+          git add .nodeprop.yml
+          git commit -m "Auto-generate .nodeprop.yml for ${{ github.event.inputs.service_name }}"
+          git push

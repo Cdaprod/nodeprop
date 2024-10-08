@@ -1,0 +1,45 @@
+# .empty.nodeprop.yml
+id: ""
+name: ""
+address: ""
+capabilities: []
+status: ""
+metadata:
+  description: ""
+  owner: ""
+  last_updated: ""
+  tags: []
+  github:
+    stars: 0
+    forks: 0
+    issues: 0
+    pull_requests:
+      open: 0
+      closed: 0
+    latest_commit: ""
+    license: ""
+    topics: []
+  docker:
+    dockerfile:
+      exposed_ports: []
+      env_vars: []
+      cmd: ""
+      entrypoint: ""
+      volumes: []
+    docker_compose:
+      services: []
+      ports: {}
+      volumes: {}
+      env_vars: {}
+      command: {}
+  custom_properties:
+    deploy_environment: null
+    monitoring_enabled: null
+    auto_scale: null
+    service: null
+    app: ""
+    image: ""
+    ports: []
+    volumes: []
+    network: ""
+    domain: ""

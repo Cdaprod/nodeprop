@@ -1,0 +1,3 @@
+# config.yaml
+global_nodeprop_path: "./assets/.empty.nodeprop.yml" # Path to the initial empty nodeprop file
+workflow_template_path: "./assets/default_workflow/index-nodeprop-workflow.yml" # Path to workflow templates
