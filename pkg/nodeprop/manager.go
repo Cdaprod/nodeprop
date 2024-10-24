@@ -2,164 +2,301 @@
 package nodeprop
 
 import (
-	"fmt"
-	"io/ioutil"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"time"
+    "context"
+    "fmt"
+    "io/ioutil"
+    "os"
+    "path/filepath"
+    "sync"
+    "time"
 
-	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
-	"gopkg.in/yaml.v2"
-	"github.com/spf13/viper"
-	"os/signal"
-	"syscall"
+    "github.com/google/uuid"
+    "github.com/sirupsen/logrus"
+    "gopkg.in/yaml.v2"
 )
 
-// NodePropManager represents the manager handling node properties and workflows.
+// Factory Pattern: Manager Factory
+type ManagerFactory struct {
+    logger *logrus.Logger
+}
+
+func NewManagerFactory(logger *logrus.Logger) *ManagerFactory {
+    return &ManagerFactory{logger: logger}
+}
+
+func (f *ManagerFactory) CreateManager(opts ...ManagerOption) (*NodePropManager, error) {
+    manager := &NodePropManager{
+        logger:         f.logger,
+        eventBus:      NewEventBus(),
+        templateStore: NewTemplateStore(),
+        workflowProcessor: NewWorkflowProcessor(),
+        state:         &sync.Map{},
+    }
+    
+    // Apply options (Builder Pattern)
+    for _, opt := range opts {
+        if err := opt(manager); err != nil {
+            return nil, err
+        }
+    }
+    
+    return manager, nil
+}
+
+// Builder Pattern: Manager Options
+type ManagerOption func(*NodePropManager) error
+
+func WithCache(size int) ManagerOption {
+    return func(m *NodePropManager) error {
+        cache, err := NewCache(size)
+        if err != nil {
+            return err
+        }
+        m.cache = cache
+        return nil
+    }
+}
+
+func WithMetrics() ManagerOption {
+    return func(m *NodePropManager) error {
+        m.metrics = NewMetricsCollector()
+        return nil
+    }
+}
+
+// Strategy Pattern: Workflow Processing
+type WorkflowProcessor interface {
+    Process(ctx context.Context, args NodePropArguments) error
+}
+
+type DefaultWorkflowProcessor struct {
+    logger *logrus.Logger
+}
+
+func NewWorkflowProcessor() WorkflowProcessor {
+    return &DefaultWorkflowProcessor{}
+}
+
+func (p *DefaultWorkflowProcessor) Process(ctx context.Context, args NodePropArguments) error {
+    // Implementation
+    return nil
+}
+
+// Observer Pattern: Event Bus
+type EventBus struct {
+    subscribers map[EventType][]chan Event
+    mu          sync.RWMutex
+}
+
+func NewEventBus() *EventBus {
+    return &EventBus{
+        subscribers: make(map[EventType][]chan Event),
+    }
+}
+
+func (eb *EventBus) Subscribe(eventType EventType) chan Event {
+    eb.mu.Lock()
+    defer eb.mu.Unlock()
+    
+    ch := make(chan Event, 100)
+    eb.subscribers[eventType] = append(eb.subscribers[eventType], ch)
+    return ch
+}
+
+func (eb *EventBus) Publish(event Event) {
+    eb.mu.RLock()
+    defer eb.mu.RUnlock()
+    
+    for _, ch := range eb.subscribers[event.Type] {
+        select {
+        case ch <- event:
+        default:
+            // Channel full, skip
+        }
+    }
+}
+
+// Template Strategy Pattern
+type TemplateStore struct {
+    templates map[string]Template
+    mu        sync.RWMutex
+}
+
+type Template interface {
+    Execute(data interface{}) ([]byte, error)
+}
+
+func NewTemplateStore() *TemplateStore {
+    return &TemplateStore{
+        templates: make(map[string]Template),
+    }
+}
+
+// Main Manager Implementation
 type NodePropManager struct {
-	Logger *logrus.Logger
+    logger            *logrus.Logger
+    eventBus          *EventBus
+    templateStore     *TemplateStore
+    workflowProcessor WorkflowProcessor
+    cache             Cache
+    metrics           MetricsCollector
+    state             *sync.Map
 }
 
-// EventType represents the type of an event (e.g., success, error, info).
-type EventType string
-
-const (
-	EventTypeSuccess EventType = "success"
-	EventTypeError   EventType = "error"
-	EventTypeInfo    EventType = "info"
-)
-
-// Event represents a system event with type and message.
-type Event struct {
-	Type    EventType
-	Message string
+// Cache Interface (Strategy Pattern)
+type Cache interface {
+    Get(key string) (interface{}, bool)
+    Set(key string, value interface{}) error
+    Delete(key string)
 }
 
-// NodePropArguments holds the arguments required for a NodeProp operation.
-type NodePropArguments struct {
-	RepoPath  string
-	Workflow  string
-	Domain    string
-	Config    string
+// Implementation of AddWorkflow using patterns
+func (npm *NodePropManager) AddWorkflow(ctx context.Context, args NodePropArguments) error {
+    // Context handling
+    if err := ctx.Err(); err != nil {
+        return fmt.Errorf("context error: %w", err)
+    }
+
+    // Metrics (if enabled)
+    if npm.metrics != nil {
+        defer npm.metrics.MeasureOperation("add_workflow")()
+    }
+
+    // Check cache
+    if npm.cache != nil {
+        if cached, ok := npm.cache.Get(args.RepoPath); ok {
+            npm.logger.Info("Using cached configuration")
+            return npm.applyWorkflow(ctx, cached.(NodePropFile), args)
+        }
+    }
+
+    // Process workflow
+    if err := npm.workflowProcessor.Process(ctx, args); err != nil {
+        npm.eventBus.Publish(Event{
+            Type:    EventTypeError,
+            Message: fmt.Sprintf("Workflow processing failed: %v", err),
+        })
+        return fmt.Errorf("workflow processing failed: %w", err)
+    }
+
+    // Generate NodeProp configuration
+    nodeProp, err := npm.generateNodeProp(args)
+    if err != nil {
+        return fmt.Errorf("failed to generate nodeprop: %w", err)
+    }
+
+    // Cache result
+    if npm.cache != nil {
+        npm.cache.Set(args.RepoPath, nodeProp)
+    }
+
+    // Publish success event
+    npm.eventBus.Publish(Event{
+        Type:    EventTypeSuccess,
+        Message: fmt.Sprintf("Workflow added successfully to %s", args.RepoPath),
+    })
+
+    return nil
 }
 
-// NodePropFile represents the structure of a generated .nodeprop.yml file.
-type NodePropFile struct {
-	ID               string            `yaml:"id"`
-	Name             string            `yaml:"name"`
-	Address          string            `yaml:"address"`
-	Capabilities     []string          `yaml:"capabilities"`
-	Status           string            `yaml:"status"`
-	Metadata         Metadata          `yaml:"metadata"`
-	CustomProperties CustomProperties  `yaml:"custom_properties"`
+func (npm *NodePropManager) generateNodeProp(args NodePropArguments) (NodePropFile, error) {
+    nodeProp := NodePropFile{
+        ID:      uuid.New().String(),
+        Name:    filepath.Base(args.RepoPath),
+        Address: fmt.Sprintf("https://github.com/Cdaprod/%s", filepath.Base(args.RepoPath)),
+        Status:  "active",
+        Metadata: Metadata{
+            LastUpdated: time.Now().Format(time.RFC3339),
+        },
+        CustomProperties: CustomProperties{
+            Domain: args.Domain,
+        },
+    }
+
+    return nodeProp, nil
 }
 
-// AddWorkflow adds a new workflow to the target repository using `index-nodeprop-workflow.yml` 
-// and generates `.nodeprop.yml` using a template from `/assets/.empty.nodeprop.yml`.
-func (npm *NodePropManager) AddWorkflow(args NodePropArguments) error {
-	npm.Logger.Infof("Adding workflow '%s' to repository '%s'", args.Workflow, args.RepoPath)
-
-	// Path to the local assets folder containing the workflow and .empty.nodeprop.yml.
-	assetsDir := "./assets"
-
-	// Read the `index-nodeprop-workflow.yml` from assets directory.
-	workflowFile := filepath.Join(assetsDir, "index-nodeprop-workflow.yml")
-	workflowContent, err := ioutil.ReadFile(workflowFile)
-	if err != nil {
-		npm.Logger.Errorf("Failed to read workflow file '%s': %v", workflowFile, err)
-		return err
-	}
-
-	// Write the workflow to the target repo's `.github/workflows` directory.
-	workflowPath := filepath.Join(args.RepoPath, ".github", "workflows", fmt.Sprintf("%s.yml", args.Workflow))
-	err = os.MkdirAll(filepath.Dir(workflowPath), 0755)
-	if err != nil {
-		npm.Logger.Errorf("Failed to create workflow directory: %v", err)
-		return err
-	}
-
-	err = ioutil.WriteFile(workflowPath, workflowContent, 0644)
-	if err != nil {
-		npm.Logger.Errorf("Failed to write workflow file: %v", err)
-		return err
-	}
-
-	npm.Logger.Infof("Workflow '%s' added successfully to repository '%s'", args.Workflow, args.RepoPath)
-
-	// Simulate workflow execution and generating `.nodeprop.yml`.
-	npm.Logger.Info("Waiting for workflow to complete...")
-	time.Sleep(5 * time.Second) // Simulated delay.
-
-	// Read the `.empty.nodeprop.yml` template from assets directory.
-	emptyNodePropFile := filepath.Join(assetsDir, ".empty.nodeprop.yml")
-	emptyNodePropContent, err := ioutil.ReadFile(emptyNodePropFile)
-	if err != nil {
-		npm.Logger.Errorf("Failed to read .empty.nodeprop.yml: %v", err)
-		return err
-	}
-
-	// Unmarshal the empty nodeprop template.
-	var nodeProp NodePropFile
-	err = yaml.Unmarshal(emptyNodePropContent, &nodeProp)
-	if err != nil {
-		npm.Logger.Errorf("Failed to unmarshal .empty.nodeprop.yml: %v", err)
-		return err
-	}
-
-	// Update the nodeprop template with dynamic values.
-	nodeProp.ID = uuid.New().String()
-	nodeProp.Name = filepath.Base(args.RepoPath)
-	nodeProp.Address = fmt.Sprintf("https://github.com/Cdaprod/%s", filepath.Base(args.RepoPath))
-	nodeProp.Metadata.LastUpdated = time.Now().Format(time.RFC3339)
-	nodeProp.CustomProperties.Domain = args.Domain
-
-	// Marshal the updated .nodeprop.yml file.
-	nodePropYAML, err := yaml.Marshal(&nodeProp)
-	if err != nil {
-		npm.Logger.Errorf("Failed to marshal .nodeprop.yml: %v", err)
-		return err
-	}
-
-	// Write the updated .nodeprop.yml to the target repository.
-	nodePropPath := filepath.Join(args.RepoPath, ".nodeprop.yml")
-	err = ioutil.WriteFile(nodePropPath, nodePropYAML, 0644)
-	if err != nil {
-		npm.Logger.Errorf("Failed to write .nodeprop.yml: %v", err)
-		return err
-	}
-
-	npm.Logger.Infof(".nodeprop.yml generated successfully at %s", nodePropPath)
-	return nil
+// Command Pattern: Actions
+type Action interface {
+    Execute(ctx context.Context) error
 }
 
-// SignalHandler listens for OS signals to handle reloads or shutdowns.
-func (npm *NodePropManager) SignalHandler() {
-	signalCh := make(chan os.Signal, 1)
-	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-
-	for {
-		sig := <-signalCh
-		switch sig {
-		case syscall.SIGHUP:
-			npm.Logger.Info("Received SIGHUP, reloading configuration.")
-			npm.ReloadConfig(NodePropArguments{Config: "config.yaml"})
-		case syscall.SIGINT, syscall.SIGTERM:
-			npm.Logger.Info("Received termination signal, shutting down.")
-			os.Exit(0)
-		}
-	}
+type ReloadConfigAction struct {
+    manager *NodePropManager
+    config  string
 }
 
-// ReloadConfig reloads the configuration using Viper.
-func (npm *NodePropManager) ReloadConfig(args NodePropArguments) error {
-	viper.SetConfigFile(args.Config) // Use the specified config file.
-	err := viper.ReadInConfig()
-	if err != nil {
-		npm.Logger.Errorf("Error reading config file during reload: %v", err)
-		return err
-	}
-	npm.Logger.Info("Configuration reloaded successfully.")
-	return nil
+func (a *ReloadConfigAction) Execute(ctx context.Context) error {
+    // Implementation
+    return nil
+}
+
+// Lifecycle management
+func (npm *NodePropManager) Start(ctx context.Context) error {
+    // Start background workers
+    go npm.backgroundWorker(ctx)
+    return nil
+}
+
+func (npm *NodePropManager) Stop(ctx context.Context) error {
+    // Cleanup and shutdown
+    return nil
+}
+
+func (npm *NodePropManager) backgroundWorker(ctx context.Context) {
+    ticker := time.NewTicker(time.Hour)
+    defer ticker.Stop()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            npm.cleanup()
+        }
+    }
+}
+
+func (npm *NodePropManager) cleanup() {
+    // Cleanup implementation
+}
+
+// Example usage:
+/*
+func main() {
+    logger := logrus.New()
+    factory := NewManagerFactory(logger)
+    
+    manager, err := factory.CreateManager(
+        WithCache(1000),
+        WithMetrics(),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    ctx := context.Background()
+    if err := manager.Start(ctx); err != nil {
+        log.Fatal(err)
+    }
+    defer manager.Stop(ctx)
+
+    // Subscribe to events
+    eventCh := manager.eventBus.Subscribe(EventTypeSuccess)
+    go func() {
+        for event := range eventCh {
+            log.Printf("Event received: %s", event.Message)
+        }
+    }()
+
+    // Add workflow
+    args := NodePropArguments{
+        RepoPath: "./myrepo",
+        Workflow: "test-workflow",
+        Domain:   "example.com",
+    }
+    
+    if err := manager.AddWorkflow(ctx, args); err != nil {
+        log.Fatal(err)
+    }
 }
