@@ -3,150 +3,192 @@ package nodeprop
 
 import (
     "context"
+    "time"
 )
 
-// Core interfaces
-type Manager interface {
+// CoreManager combines all manager interfaces
+type CoreManager interface {
     ConfigManager
     WorkflowManager
     SecretManager
+    RepositoryManager
     EventEmitter
 }
 
+// ConfigManager handles configuration related operations
 type ConfigManager interface {
-    AddNodePropConfig(ctx context.Context, args NodePropArguments) error
-    ReloadConfig(args NodePropArguments) error
+    LoadConfig(ctx context.Context) error
+    SaveConfig(ctx context.Context) error
+    GetConfigValue(key string) interface{}
+    SetConfigValue(key string, value interface{}) error
 }
 
+// WorkflowManager handles GitHub workflow operations
 type WorkflowManager interface {
-    AddWorkflow(ctx context.Context, args NodePropArguments) error
-    ListWorkflows(ctx context.Context) ([]string, error)
+    AddWorkflow(ctx context.Context, args WorkflowArguments) error
+    UpdateWorkflow(ctx context.Context, args WorkflowArguments) error
+    DeleteWorkflow(ctx context.Context, repo, name string) error
+    ListWorkflows(ctx context.Context, repo string) ([]Workflow, error)
+    TriggerWorkflow(ctx context.Context, repo, workflowID string, inputs map[string]interface{}) error
 }
 
+// SecretManager handles GitHub secrets
 type SecretManager interface {
-    AddSecret(ctx context.Context, repo, name, value string) error
-    ListSecrets(ctx context.Context, repo string) ([]string, error)
+    AddSecret(ctx context.Context, args SecretArguments) error
+    DeleteSecret(ctx context.Context, repo, name string) error
+    ListSecrets(ctx context.Context, repo string) ([]Secret, error)
 }
 
+// RepositoryManager handles repository operations
+type RepositoryManager interface {
+    GenerateNodeProp(ctx context.Context, args NodePropArguments) error
+    UpdateNodeProp(ctx context.Context, args NodePropArguments) error
+    ValidateNodeProp(ctx context.Context, nodeProp NodePropFile) error
+    CheckFile(ctx context.Context, repo, path string) (bool, []byte, error)
+}
+
+// EventEmitter handles event publishing and subscription
 type EventEmitter interface {
-    Subscribe(eventType EventType) <-chan Event
+    Subscribe(eventType EventType) (<-chan Event, func())
     Emit(event Event)
 }
 
-// Enhanced types
-type NodePropManager struct {
-    config      *Config
-    logger      *logrus.Logger
-    secretMgr   SecretManager
-    workflowMgr WorkflowManager
-    eventBus    EventEmitter
-    store       Store
-}
-
-type Config struct {
-    GlobalNodePropPath   string            `yaml:"global_nodeprop_path"`
-    WorkflowTemplatePath string            `yaml:"workflow_template_path"`
-    GitHub              GitHubConfig       `yaml:"github"`
-    Storage            StorageConfig       `yaml:"storage"`
-}
-
+// Store interface for persistent storage
 type Store interface {
     Get(key string) (interface{}, error)
     Set(key string, value interface{}) error
     Delete(key string) error
+    List(prefix string) (map[string]interface{}, error)
 }
 
-// Factory function
+// Cache interface for temporary storage
+type Cache interface {
+    Get(key string) (interface{}, bool)
+    Set(key string, value interface{}, expiration time.Duration)
+    Delete(key string)
+}
+
+// Arguments structures
+type WorkflowArguments struct {
+    Repository string
+    Name       string
+    Content    string
+    Template   string
+    Variables  map[string]interface{}
+    Reference  string    // For triggering workflows
+}
+
+type SecretArguments struct {
+    Repository string
+    Name       string
+    Value      string
+    Visibility string // "all", "private", "selected"
+}
+
+type NodePropArguments struct {
+    RepoPath  string
+    RepoName  string
+    Domain    string
+    Config    string
+    Variables map[string]interface{}
+}
+
+// Result structures
+type Workflow struct {
+    ID       string    `json:"id"`
+    Name     string    `json:"name"`
+    Path     string    `json:"path"`
+    Content  string    `json:"content"`
+    Created  time.Time `json:"created"`
+    Updated  time.Time `json:"updated"`
+    Status   string    `json:"status"`
+}
+
+type Secret struct {
+    Name       string    `json:"name"`
+    Created    time.Time `json:"created"`
+    Updated    time.Time `json:"updated"`
+    Visibility string    `json:"visibility"`
+}
+
+// Event types and structures
+type EventType string
+
+const (
+    EventWorkflow EventType = "workflow"
+    EventSecret   EventType = "secret"
+    EventConfig   EventType = "config"
+    EventError    EventType = "error"
+)
+
+type Event struct {
+    Type      EventType              `json:"type"`
+    Name      string                 `json:"name"`
+    Data      interface{}            `json:"data"`
+    Error     error                  `json:"error,omitempty"`
+    Timestamp time.Time             `json:"timestamp"`
+    Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// Factory method and options
+type Option func(*NodePropManager) error
+
 func NewNodePropManager(ctx context.Context, opts ...Option) (*NodePropManager, error) {
-    npm := &NodePropManager{
+    manager := &NodePropManager{
         config:   DefaultConfig(),
-        eventBus: NewEventBus(),
         store:    NewFileStore(),
+        cache:    NewInMemoryCache(),
+        eventBus: NewEventBus(),
+        logger:   NewLogger(),
     }
 
     for _, opt := range opts {
-        if err := opt(npm); err != nil {
+        if err := opt(manager); err != nil {
             return nil, err
         }
     }
 
-    return npm, nil
+    if err := manager.Initialize(ctx); err != nil {
+        return nil, err
+    }
+
+    return manager, nil
 }
 
-// Options pattern
-type Option func(*NodePropManager) error
-
-func WithGitHub(token string) Option {
-    return func(npm *NodePropManager) error {
-        secretMgr, err := NewGitHubSecretManager(token)
-        if err != nil {
-            return err
-        }
-        npm.secretMgr = secretMgr
+// Configuration options
+func WithGitHubToken(token string) Option {
+    return func(m *NodePropManager) error {
+        m.config.GitHub.Token = token
         return nil
     }
 }
 
-func WithLogger(logger *logrus.Logger) Option {
-    return func(npm *NodePropManager) error {
-        npm.logger = logger
+func WithLogger(logger Logger) Option {
+    return func(m *NodePropManager) error {
+        m.logger = logger
         return nil
     }
 }
 
-// Event system
-type EventBus struct {
-    subscribers map[EventType][]chan Event
-    mu          sync.RWMutex
-}
-
-func (eb *EventBus) Subscribe(eventType EventType) <-chan Event {
-    eb.mu.Lock()
-    defer eb.mu.Unlock()
-
-    ch := make(chan Event, 100)
-    eb.subscribers[eventType] = append(eb.subscribers[eventType], ch)
-    return ch
-}
-
-func (eb *EventBus) Emit(event Event) {
-    eb.mu.RLock()
-    defer eb.mu.RUnlock()
-
-    for _, ch := range eb.subscribers[event.Type] {
-        select {
-        case ch <- event:
-        default:
-            // Channel full, skip
-        }
+func WithStore(store Store) Option {
+    return func(m *NodePropManager) error {
+        m.store = store
+        return nil
     }
 }
 
-// Example usage
-func ExampleUsage() {
-    ctx := context.Background()
-    logger := logrus.New()
-
-    npm, err := NewNodePropManager(
-        ctx,
-        WithGitHub(os.Getenv("GITHUB_TOKEN")),
-        WithLogger(logger),
-    )
-    if err != nil {
-        log.Fatal(err)
+func WithCache(cache Cache) Option {
+    return func(m *NodePropManager) error {
+        m.cache = cache
+        return nil
     }
+}
 
-    // Subscribe to events
-    events := npm.eventBus.Subscribe(EventTypeWorkflow)
-    go func() {
-        for event := range events {
-            logger.Infof("Workflow event: %v", event)
-        }
-    }()
-
-    // Use the manager
-    err = npm.AddWorkflow(ctx, NodePropArguments{
-        RepoPath: "./myrepo",
-        Workflow: "ci.yml",
-    })
+// Logger interface
+type Logger interface {
+    Debug(args ...interface{})
+    Info(args ...interface{})
+    Warn(args ...interface{})
+    Error(args ...interface{})
+    WithField(key string, value interface{}) Logger
 }

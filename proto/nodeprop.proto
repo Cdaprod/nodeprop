@@ -1,0 +1,221 @@
+// proto/nodeprop/v1/nodeprop.proto
+syntax = "proto3";
+
+package nodeprop.v1;
+
+option go_package = "github.com/Cdaprod/nodeprop/pkg/api/v1;nodepropv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+// NodePropService defines the main service interface
+service NodePropService {
+    // Workflow operations
+    rpc AddWorkflow(AddWorkflowRequest) returns (WorkflowResponse);
+    rpc TriggerWorkflow(TriggerWorkflowRequest) returns (WorkflowRunResponse);
+    rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+    
+    // Secret operations
+    rpc AddSecret(AddSecretRequest) returns (SecretResponse);
+    rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
+    
+    // File operations
+    rpc CheckFile(CheckFileRequest) returns (CheckFileResponse);
+    
+    // Configuration operations
+    rpc GetConfig(GetConfigRequest) returns (ConfigResponse);
+    rpc UpdateConfig(UpdateConfigRequest) returns (ConfigResponse);
+    
+    // Event streaming
+    rpc SubscribeEvents(SubscribeEventsRequest) returns (stream Event);
+}
+
+// Request/Response messages for Workflow operations
+message AddWorkflowRequest {
+    string repository = 1;
+    string name = 2;
+    string content = 3;
+    string template = 4;
+    map<string, google.protobuf.Value> variables = 5;
+}
+
+message WorkflowResponse {
+    string id = 1;
+    string name = 2;
+    string status = 3;
+    string path = 4;
+    google.protobuf.Timestamp created_at = 5;
+    google.protobuf.Timestamp updated_at = 6;
+}
+
+message TriggerWorkflowRequest {
+    string repository = 1;
+    string workflow_id = 2;
+    string reference = 3;
+    map<string, google.protobuf.Value> inputs = 4;
+}
+
+message WorkflowRunResponse {
+    string run_id = 1;
+    string status = 2;
+    string conclusion = 3;
+    google.protobuf.Timestamp started_at = 4;
+    google.protobuf.Timestamp completed_at = 5;
+}
+
+message ListWorkflowsRequest {
+    string repository = 1;
+    int32 page_size = 2;
+    string page_token = 3;
+}
+
+message ListWorkflowsResponse {
+    repeated WorkflowResponse workflows = 1;
+    string next_page_token = 2;
+    int32 total_count = 3;
+}
+
+// Request/Response messages for Secret operations
+message AddSecretRequest {
+    string repository = 1;
+    string name = 2;
+    string value = 3;
+    string visibility = 4;
+}
+
+message SecretResponse {
+    string name = 1;
+    string visibility = 2;
+    google.protobuf.Timestamp created_at = 3;
+    google.protobuf.Timestamp updated_at = 4;
+}
+
+message ListSecretsRequest {
+    string repository = 1;
+}
+
+message ListSecretsResponse {
+    repeated SecretResponse secrets = 1;
+}
+
+// Request/Response messages for File operations
+message CheckFileRequest {
+    string repository = 1;
+    string path = 2;
+}
+
+message CheckFileResponse {
+    bool exists = 1;
+    bytes content = 2;
+    string sha = 3;
+}
+
+// Request/Response messages for Configuration operations
+message GetConfigRequest {
+    string repository = 1;
+}
+
+message UpdateConfigRequest {
+    string repository = 1;
+    map<string, google.protobuf.Value> updates = 2;
+}
+
+message ConfigResponse {
+    NodePropConfig config = 1;
+    google.protobuf.Timestamp updated_at = 2;
+}
+
+// Configuration messages
+message NodePropConfig {
+    string id = 1;
+    string name = 2;
+    string address = 3;
+    repeated string capabilities = 4;
+    string status = 5;
+    Metadata metadata = 6;
+    CustomProperties custom_properties = 7;
+}
+
+message Metadata {
+    string description = 1;
+    string owner = 2;
+    string last_updated = 3;
+    repeated string tags = 4;
+    GitHubMetadata github = 5;
+    DockerMetadata docker = 6;
+}
+
+message GitHubMetadata {
+    int32 stars = 1;
+    int32 forks = 2;
+    int32 issues = 3;
+    PullRequestInfo pull_requests = 4;
+    string latest_commit = 5;
+    string license = 6;
+    repeated string topics = 7;
+}
+
+message PullRequestInfo {
+    int32 open = 1;
+    int32 closed = 2;
+}
+
+message DockerMetadata {
+    DockerfileInfo dockerfile = 1;
+    DockerCompose docker_compose = 2;
+}
+
+message DockerfileInfo {
+    repeated string exposed_ports = 1;
+    repeated string env_vars = 2;
+    string cmd = 3;
+    string entrypoint = 4;
+    repeated string volumes = 5;
+}
+
+message DockerCompose {
+    repeated string services = 1;
+    map<string, PortConfig> ports = 2;
+    map<string, VolumeConfig> volumes = 3;
+    map<string, EnvVarConfig> env_vars = 4;
+    map<string, string> command = 5;
+}
+
+message PortConfig {
+    repeated int32 ports = 1;
+}
+
+message VolumeConfig {
+    repeated string paths = 1;
+}
+
+message EnvVarConfig {
+    repeated string variables = 1;
+}
+
+message CustomProperties {
+    string deploy_environment = 1;
+    bool monitoring_enabled = 2;
+    bool auto_scale = 3;
+    string service = 4;
+    string app = 5;
+    string image = 6;
+    repeated string ports = 7;
+    repeated string volumes = 8;
+    string network = 9;
+    string domain = 10;
+}
+
+// Event messages
+message SubscribeEventsRequest {
+    repeated string event_types = 1;
+}
+
+message Event {
+    string type = 1;
+    string name = 2;
+    google.protobuf.Struct data = 3;
+    string error = 4;
+    google.protobuf.Timestamp timestamp = 5;
+}
