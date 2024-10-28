@@ -9,9 +9,9 @@ import (
 
 // NodePropManager handles adding workflows and managing .nodeprop.yml files
 type NodePropManager struct {
-	GlobalNodePropPath string
-	WorkflowTemplatePath string
-	Logger             *logrus.Logger
+	GlobalNodePropPath 		string
+	WorkflowTemplatePath 	string
+	Logger             		*logrus.Logger
 }
 
 // NewNodePropManager initializes the NodePropManager with paths from the config
