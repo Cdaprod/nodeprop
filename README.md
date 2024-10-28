@@ -1,3 +1,5 @@
+[![CI](https://github.com/Cdaprod/nodeprop/actions/workflows/ci.yml/badge.svg)](https://github.com/Cdaprod/nodeprop/actions/workflows/ci.yml)
+
 # NodeProp
 
 NodeProp is a dynamic workflow management system designed to automate the addition and management of workflows within target repositories. It leverages Go's powerful features, including generics and Viper for configuration management, to provide a flexible and scalable solution for managing workflows and their configurations.
