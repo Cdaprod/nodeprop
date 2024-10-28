@@ -73,6 +73,7 @@ NodeProp uses GitHub Actions for continuous integration. The CI workflow is defi
 
 #### Project Structure
 
+```
 nodeprop/
 ├── cmd/
 │   └── main.go                 // CLI entry point
@@ -91,7 +92,8 @@ nodeprop/
 │       └── ci.yml              // GitHub Actions CI workflow
 ├── config.yaml                 // Configuration file
 ├── go.mod                      // Go module dependencies
-└── go.sum                      // Dependency checksum file
+└── go.sum    // Dependency checksum file
+``` 
 
 ## Contributing
 
