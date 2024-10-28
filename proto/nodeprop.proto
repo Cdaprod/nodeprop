@@ -1,4 +1,4 @@
-// proto/nodeprop/v1/nodeprop.proto
+// proto/nodeprop/v1/nodeprop.proto 
 syntax = "proto3";
 
 package nodeprop.v1;
