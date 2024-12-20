@@ -1,5 +1,50 @@
 [![CI](https://github.com/Cdaprod/nodeprop/actions/workflows/ci.yml/badge.svg)](https://github.com/Cdaprod/nodeprop/actions/workflows/ci.yml)
 
+```mermaid
+graph TB
+    subgraph "Git Repositories"
+        Repo1[Service Repo 1]
+        Repo2[Service Repo 2]
+        Repo3[Service Repo 3]
+        
+        Repo1 --> |contains| NP1[nodeprop.yml]
+        Repo2 --> |contains| NP2[nodeprop.yml]
+        Repo3 --> |contains| NP3[nodeprop.yml]
+    end
+
+    subgraph "Discovery Process"
+        Scanner[Repo Scanner]
+        Parser[Properties Parser]
+        Validator[Schema Validator]
+        
+        Scanner --> |finds| Parser
+        Parser --> |validates| Validator
+        Validator --> |creates/updates| Node
+    end
+
+    subgraph "Graph Database"
+        Node[Service Node]
+        Docker[Docker Info]
+        Proto[Proto Info]
+        GitHub[GitHub Info]
+        Custom[Custom Props]
+        
+        Node --> Docker
+        Node --> Proto
+        Node --> GitHub
+        Node --> Custom
+    end
+
+    NP1 & NP2 & NP3 --> Scanner
+
+    classDef repo fill:#f9f,stroke:#333
+    classDef process fill:#bbf,stroke:#333
+    classDef data fill:#bfb,stroke:#333
+    class Repo1,Repo2,Repo3 repo
+    class Scanner,Parser,Validator process
+    class Node,Docker,Proto,GitHub,Custom data
+``` 
+
 # NodeProp
 
 NodeProp is a dynamic workflow management system designed to automate the addition and management of workflows within target repositories. It leverages Go's powerful features, including generics and Viper for configuration management, to provide a flexible and scalable solution for managing workflows and their configurations.

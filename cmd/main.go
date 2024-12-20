@@ -1,4 +1,4 @@
-// cmd/main.go
+// github.com/nodeprop/cmd/main.go:dual-ghm
 package main
 
 import (
